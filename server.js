@@ -12,7 +12,7 @@ app.use(cors());
 app.use(express.json());
 
 // ---------- Smart Database Configuration ----------
-// Use Railway's variables if present, otherwise fall back to DB_*
+// ---------- Smart Database Configuration ----------
 const dbHost = process.env.MYSQLHOST || process.env.DB_HOST;
 const dbUser = process.env.MYSQLUSER || process.env.DB_USER;
 const dbPassword = process.env.MYSQLPASSWORD || process.env.DB_PASSWORD;
@@ -20,13 +20,15 @@ const dbName = process.env.MYSQLDATABASE || process.env.DB_NAME;
 const dbPort = process.env.MYSQLPORT || process.env.DB_PORT || 3306;
 
 let sslConfig = {};
+// Only use SSL if we are NOT on Railway (i.e., no MYSQLHOST variable) AND ca.pem exists
+const isRailway = !!process.env.MYSQLHOST;
 const caPath = path.join(__dirname, 'ca.pem');
-// Only use SSL if ca.pem exists (Aiven) – otherwise skip (Railway / local)
-if (fs.existsSync(caPath)) {
+
+if (!isRailway && fs.existsSync(caPath)) {
     sslConfig = { ssl: { ca: fs.readFileSync(caPath) } };
-    console.log('🔒 SSL enabled using ca.pem');
+    console.log('🔒 SSL enabled using ca.pem (Aiven/local)');
 } else {
-    console.log('🔓 No ca.pem found – connecting without SSL (Railway / local)');
+    console.log('🔓 Connecting without SSL (Railway or no ca.pem)');
 }
 
 const pool = mysql.createPool({
@@ -39,7 +41,6 @@ const pool = mysql.createPool({
     connectionLimit: 10,
     ...sslConfig
 });
-
 const promisePool = pool.promise();
 
 // Test database connection
