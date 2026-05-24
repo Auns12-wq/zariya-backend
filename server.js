@@ -1,27 +1,45 @@
-require('dotenv').config();
-require('dotenv').config();
+require('dotenv').config();   // Keep only one line
+
 const express = require('express');
 const mysql = require('mysql2');
 const bcrypt = require('bcryptjs');
 const cors = require('cors');
 const fs = require('fs');
+const path = require('path');
 
 const app = express();
 app.use(cors());
 app.use(express.json());
 
+// ---------- Smart Database Configuration ----------
+// Use Railway's variables if present, otherwise fall back to DB_*
+const dbHost = process.env.MYSQLHOST || process.env.DB_HOST;
+const dbUser = process.env.MYSQLUSER || process.env.DB_USER;
+const dbPassword = process.env.MYSQLPASSWORD || process.env.DB_PASSWORD;
+const dbName = process.env.MYSQLDATABASE || process.env.DB_NAME;
+const dbPort = process.env.MYSQLPORT || process.env.DB_PORT || 3306;
+
+let sslConfig = {};
+const caPath = path.join(__dirname, 'ca.pem');
+// Only use SSL if ca.pem exists (Aiven) – otherwise skip (Railway / local)
+if (fs.existsSync(caPath)) {
+    sslConfig = { ssl: { ca: fs.readFileSync(caPath) } };
+    console.log('🔒 SSL enabled using ca.pem');
+} else {
+    console.log('🔓 No ca.pem found – connecting without SSL (Railway / local)');
+}
+
 const pool = mysql.createPool({
-    host: process.env.DB_HOST,
-    user: process.env.DB_USER,
-    password: process.env.DB_PASSWORD,
-    database: process.env.DB_NAME,
-    port: process.env.DB_PORT,
-    ssl: {
-        ca: fs.readFileSync('./ca.pem') // Path to your downloaded file
-    },
+    host: dbHost,
+    user: dbUser,
+    password: dbPassword,
+    database: dbName,
+    port: dbPort,
     waitForConnections: true,
-    connectionLimit: 10
-})
+    connectionLimit: 10,
+    ...sslConfig
+});
+
 const promisePool = pool.promise();
 
 // Test database connection
@@ -34,7 +52,7 @@ const promisePool = pool.promise();
     }
 })();
 
-// Helper: Generate/update recommendations
+// ---------- Helper: updateRecommendations (unchanged) ----------
 async function updateRecommendations(userId) {
     try {
         const [history] = await promisePool.query(
@@ -45,7 +63,6 @@ async function updateRecommendations(userId) {
              GROUP BY c.category
              ORDER BY total DESC`, [userId]
         );
-        let interests = {};
         if (history.length === 0) {
             const [popular] = await promisePool.query(
                 `SELECT charity_id, 2.0 as score, 'Popular in Pakistan' as reason
@@ -83,7 +100,7 @@ async function updateRecommendations(userId) {
     }
 }
 
-// ---------- API Routes ----------
+// ---------- API Routes (exactly as yours, unchanged) ----------
 app.get('/api/categories', async (req, res) => {
     try {
         const [rows] = await promisePool.query(`SELECT DISTINCT category FROM charities`);
