@@ -4,6 +4,7 @@ const express = require('express');
 const mysql = require('mysql2');
 const bcrypt = require('bcryptjs');
 const cors = require('cors');
+const fs = require('fs');
 
 const app = express();
 app.use(cors());
@@ -14,9 +15,13 @@ const pool = mysql.createPool({
     user: process.env.DB_USER,
     password: process.env.DB_PASSWORD,
     database: process.env.DB_NAME,
+    port: process.env.DB_PORT,
+    ssl: {
+        ca: fs.readFileSync('./ca.pem') // Path to your downloaded file
+    },
     waitForConnections: true,
     connectionLimit: 10
-});
+})
 const promisePool = pool.promise();
 
 // Test database connection
