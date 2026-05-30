@@ -1,4 +1,4 @@
-require('dotenv').config();   // Keep only one line
+require('dotenv').config();
 
 const express = require('express');
 const mysql = require('mysql2');
@@ -12,7 +12,6 @@ app.use(cors());
 app.use(express.json());
 
 // ---------- Smart Database Configuration ----------
-// ---------- Smart Database Configuration ----------
 const dbHost = process.env.MYSQLHOST || process.env.DB_HOST;
 const dbUser = process.env.MYSQLUSER || process.env.DB_USER;
 const dbPassword = process.env.MYSQLPASSWORD || process.env.DB_PASSWORD;
@@ -20,7 +19,6 @@ const dbName = process.env.MYSQLDATABASE || process.env.DB_NAME;
 const dbPort = process.env.MYSQLPORT || process.env.DB_PORT || 3306;
 
 let sslConfig = {};
-// Only use SSL if we are NOT on Railway (i.e., no MYSQLHOST variable) AND ca.pem exists
 const isRailway = !!process.env.MYSQLHOST;
 const caPath = path.join(__dirname, 'ca.pem');
 
@@ -53,7 +51,7 @@ const promisePool = pool.promise();
     }
 })();
 
-// ---------- Helper: updateRecommendations (unchanged) ----------
+// ---------- Helper: updateRecommendations ----------
 async function updateRecommendations(userId) {
     try {
         const [history] = await promisePool.query(
@@ -101,7 +99,7 @@ async function updateRecommendations(userId) {
     }
 }
 
-// ---------- API Routes (exactly as yours, unchanged) ----------
+// ---------- Public API Routes ----------
 app.get('/api/categories', async (req, res) => {
     try {
         const [rows] = await promisePool.query(`SELECT DISTINCT category FROM charities`);
@@ -197,6 +195,7 @@ app.post('/api/register', async (req, res) => {
     }
 });
 
+// ✅ LOGIN ROUTE WITH ROLE IN RESPONSE
 app.post('/api/login', async (req, res) => {
     const { email, password } = req.body;
     try {
@@ -206,6 +205,8 @@ app.post('/api/login', async (req, res) => {
         const valid = await bcrypt.compare(password, user.password_hash);
         if (!valid) return res.status(401).json({ error: 'Invalid credentials' });
         delete user.password_hash;
+        // Ensure role is always present (default to 'user')
+        user.role = user.role || 'user';
         res.json({ success: true, user, token: user.user_id.toString() });
     } catch (err) {
         console.error('Error in /api/login:', err);
@@ -259,7 +260,7 @@ app.get('/api/profile/:userId', async (req, res) => {
     const userId = req.params.userId;
     try {
         const [rows] = await promisePool.query(
-            `SELECT user_id, full_name, email, total_donated, created_at FROM users WHERE user_id = ?`,
+            `SELECT user_id, full_name, email, total_donated, created_at, role FROM users WHERE user_id = ?`,
             [userId]
         );
         if (rows.length === 0) return res.status(404).json({ error: 'User not found' });
@@ -273,6 +274,73 @@ app.get('/api/profile/:userId', async (req, res) => {
         console.error('Error in /api/profile:', err);
         res.status(500).json({ error: err.message });
     }
+});
+
+// ---------- Admin Middleware ----------
+async function isAdmin(req, res, next) {
+    const userId = req.headers['user-id'];
+    if (!userId) return res.status(401).json({ error: 'Unauthorized' });
+    const [rows] = await promisePool.query('SELECT role FROM users WHERE user_id = ?', [userId]);
+    if (rows.length === 0 || rows[0].role !== 'admin') return res.status(403).json({ error: 'Admin only' });
+    req.userId = userId;
+    next();
+}
+
+// ---------- Admin API Routes ----------
+app.get('/api/admin/ngos', isAdmin, async (req, res) => {
+    const [rows] = await promisePool.query('SELECT * FROM charities ORDER BY charity_id DESC');
+    res.json(rows);
+});
+
+app.post('/api/admin/ngos', isAdmin, async (req, res) => {
+    const { name, description, category, location, goal_amount, impact_description, image_emoji, image_url } = req.body;
+    const [result] = await promisePool.query(
+        `INSERT INTO charities (name, description, category, location, goal_amount, impact_description, image_emoji, image_url)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+        [name, description, category, location, goal_amount, impact_description, image_emoji || '❤️', image_url || '']
+    );
+    res.json({ success: true, charity_id: result.insertId });
+});
+
+app.put('/api/admin/ngos/:id', isAdmin, async (req, res) => {
+    const id = req.params.id;
+    const updates = req.body;
+    await promisePool.query('UPDATE charities SET ? WHERE charity_id = ?', [updates, id]);
+    res.json({ success: true });
+});
+
+app.delete('/api/admin/ngos/:id', isAdmin, async (req, res) => {
+    await promisePool.query('DELETE FROM charities WHERE charity_id = ?', [req.params.id]);
+    res.json({ success: true });
+});
+
+app.get('/api/admin/donations', isAdmin, async (req, res) => {
+    const [rows] = await promisePool.query(`
+        SELECT d.*, c.name as charity_name, u.full_name as user_name
+        FROM donations d
+        JOIN charities c ON d.charity_id = c.charity_id
+        JOIN users u ON d.user_id = u.user_id
+        ORDER BY d.donation_date DESC
+    `);
+    res.json(rows);
+});
+
+app.get('/api/admin/ngo-stats', isAdmin, async (req, res) => {
+    const [rows] = await promisePool.query(`
+        SELECT c.charity_id, c.name, c.image_emoji, SUM(d.amount) as total_collected, COUNT(d.donation_id) as donation_count
+        FROM charities c
+        LEFT JOIN donations d ON c.charity_id = d.charity_id
+        GROUP BY c.charity_id
+    `);
+    res.json(rows);
+});
+
+app.get('/api/admin/monthly-total', isAdmin, async (req, res) => {
+    const [rows] = await promisePool.query(`
+        SELECT SUM(amount) as total FROM donations 
+        WHERE MONTH(donation_date) = MONTH(CURRENT_DATE()) AND YEAR(donation_date) = YEAR(CURRENT_DATE())
+    `);
+    res.json({ total: rows[0].total || 0 });
 });
 
 const PORT = process.env.PORT || 5000;
