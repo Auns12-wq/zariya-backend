@@ -302,19 +302,24 @@ app.get('/api/profile/:userId', async (req, res) => {
     }
 });
 
-// ========== ADDED: Payment Endpoint (pk-pay) ==========
+// ========== FIXED: Payment Endpoint with robust clientSecret extraction ==========
 app.post('/api/create-payment-intent', async (req, res) => {
+    // 🔑 ADDED LOGS
+    console.log('🔑 Received request to create payment intent.');
+    console.log('💳 Stripe Secret Key exists?', !!process.env.STRIPE_SECRET_KEY);
+    
+    const { amount, provider, userId, charityId, isAnonymous } = req.body;
+
+    if (!amount || amount <= 0) {
+        return res.status(400).json({ error: 'Invalid amount' });
+    }
+    const allowedProviders = ['stripe', 'jazzcash', 'easypaisa'];
+    if (!provider || !allowedProviders.includes(provider)) {
+        return res.status(400).json({ error: 'Invalid payment provider' });
+    }
+
     try {
-        const { amount, provider, userId, charityId, isAnonymous } = req.body;
-
-        if (!amount || amount <= 0) {
-            return res.status(400).json({ error: 'Invalid amount' });
-        }
-        const allowedProviders = ['stripe', 'jazzcash', 'easypaisa'];
-        if (!provider || !allowedProviders.includes(provider)) {
-            return res.status(400).json({ error: 'Invalid payment provider' });
-        }
-
+        console.log(`🚀 Attempting to create payment for amount ${amount} with provider ${provider}...`);
         const payment = await createPayment({
             provider: provider,
             amount: Math.round(amount * 100), // Convert to paisa/cents
@@ -327,20 +332,33 @@ app.post('/api/create-payment-intent', async (req, res) => {
                 isAnonymous: isAnonymous || false,
             },
         });
-
+        console.log('✅ Payment created successfully! Response:', JSON.stringify(payment, null, 2));
+        
+        // ✨ Robust extraction of clientSecret (handles different property names)
+        let clientSecret = null;
+        if (provider === 'stripe') {
+            clientSecret = payment.clientSecret || payment.client_secret || 
+                          (payment.intent && payment.intent.client_secret) ||
+                          (payment.paymentIntent && payment.paymentIntent.client_secret);
+        } else {
+            // For JazzCash/EasyPaisa, we return a redirect URL instead
+            clientSecret = null; // not needed for redirect-based providers
+        }
+        
         res.json({
             success: true,
             paymentUrl: payment.redirectUrl || null,
-            clientSecret: payment.clientSecret || null,
+            clientSecret: clientSecret,
             paymentId: payment.id,
         });
     } catch (error) {
-        console.error('Payment creation error:', error);
+        console.error('❌ Payment creation FAILED:', error.message);
+        console.error('📚 Full error details:', error);
         res.status(500).json({ error: error.message });
     }
 });
 
-// ========== UPDATED: Webhook endpoint with payment_method ==========
+// ========== UPDATED: Webhook endpoint ==========
 app.post('/api/payment-webhook', async (req, res) => {
     try {
         const event = req.body;
