@@ -55,15 +55,13 @@ const promisePool = pool.promise();
 })();
 
 // ========== ADDED: Configure pk-pay ==========
-const stripeConfig = process.env.STRIPE_SECRET_KEY ? {
-  stripe: { secretKey: process.env.STRIPE_SECRET_KEY }
-} : {};
-
 configure({
-  environment: 'sandbox',
+  environment: 'sandbox', // Change to 'production' when live
   maxRetries: 3,
-  ...stripeConfig,
-
+  // Stripe configuration (easiest for testing)
+  stripe: {
+    secretKey: process.env.STRIPE_SECRET_KEY, // Add to your .env
+  },
   // Optional: JazzCash & EasyPaisa (uncomment if you have test credentials)
   // jazzcash: {
   //   merchantId: process.env.JAZZCASH_MERCHANT_ID,
