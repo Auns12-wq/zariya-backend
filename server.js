@@ -239,13 +239,14 @@ app.post('/api/login', async (req, res) => {
     }
 });
 
+// ========== UPDATED: /api/donate endpoint with payment_method ==========
 app.post('/api/donate', async (req, res) => {
-    const { user_id, charity_id, amount, is_anonymous } = req.body;
+    const { user_id, charity_id, amount, is_anonymous, payment_method } = req.body;
     if (!user_id) return res.status(401).json({ error: 'Authentication required' });
     try {
         await promisePool.query(
-            `INSERT INTO donations (user_id, charity_id, amount, is_anonymous) VALUES (?, ?, ?, ?)`,
-            [user_id, charity_id, amount, is_anonymous || false]
+            `INSERT INTO donations (user_id, charity_id, amount, is_anonymous, payment_method) VALUES (?, ?, ?, ?, ?)`,
+            [user_id, charity_id, amount, is_anonymous || false, payment_method || 'stripe']
         );
         await promisePool.query(`UPDATE charities SET total_raised = total_raised + ? WHERE charity_id = ?`, [amount, charity_id]);
         await promisePool.query(`UPDATE users SET total_donated = total_donated + ? WHERE user_id = ?`, [amount, user_id]);
@@ -339,7 +340,7 @@ app.post('/api/create-payment-intent', async (req, res) => {
     }
 });
 
-// ========== ADDED: Webhook Endpoint ==========
+// ========== UPDATED: Webhook endpoint with payment_method ==========
 app.post('/api/payment-webhook', async (req, res) => {
     try {
         const event = req.body;
@@ -352,9 +353,9 @@ app.post('/api/payment-webhook', async (req, res) => {
 
             if (userId && charityId) {
                 await promisePool.query(
-                    `INSERT INTO donations (user_id, charity_id, amount, is_anonymous, payment_intent_id, status)
-                     VALUES (?, ?, ?, ?, ?, 'completed')`,
-                    [userId, charityId, amount, isAnonymous === 'true', event.id || 'webhook']
+                    `INSERT INTO donations (user_id, charity_id, amount, is_anonymous, payment_intent_id, status, payment_method)
+                     VALUES (?, ?, ?, ?, ?, 'completed', 'stripe')`,
+                    [userId, charityId, amount, isAnonymous === 'true', event.id]
                 );
                 await promisePool.query(
                     `UPDATE charities SET total_raised = total_raised + ? WHERE charity_id = ?`,
