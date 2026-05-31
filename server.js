@@ -338,15 +338,7 @@ app.post('/api/create-payment-intent', async (req, res) => {
         res.status(500).json({ error: error.message });
     }
 });
-app.post('/api/mock-payment', async (req, res) => {
-  const { amount, userId, charityId, isAnonymous } = req.body;
-  await new Promise(resolve => setTimeout(resolve, 2000));
-  res.json({
-    success: true,
-    message: 'Payment successful (mock)',
-    transactionId: 'MOCK_' + Date.now()
-  });
-});
+
 // ========== ADDED: Webhook Endpoint ==========
 app.post('/api/payment-webhook', async (req, res) => {
     try {
