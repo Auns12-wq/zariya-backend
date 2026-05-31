@@ -7,6 +7,9 @@ const cors = require('cors');
 const fs = require('fs');
 const path = require('path');
 
+// ========== ADDED: Import pk-pay ==========
+const { configure, createPayment } = require('pk-pay');
+
 const app = express();
 app.use(cors());
 app.use(express.json());
@@ -50,6 +53,30 @@ const promisePool = pool.promise();
         console.error('❌ MySQL connection failed:', err.message);
     }
 })();
+
+// ========== ADDED: Configure pk-pay ==========
+configure({
+  environment: 'sandbox', // Change to 'production' when live
+  maxRetries: 3,
+  // Stripe configuration (easiest for testing)
+  stripe: {
+    secretKey: process.env.STRIPE_SECRET_KEY, // Add to your .env
+  },
+  // Optional: JazzCash & EasyPaisa (uncomment if you have test credentials)
+  // jazzcash: {
+  //   merchantId: process.env.JAZZCASH_MERCHANT_ID,
+  //   password: process.env.JAZZCASH_PASSWORD,
+  //   integritySalt: process.env.JAZZCASH_INTEGRITY_SALT,
+  // },
+  // easypaisa: {
+  //   method: 'rest',
+  //   storeId: process.env.EASYPAISA_STORE_ID,
+  //   privateKey: process.env.EASYPAISA_PRIVATE_KEY,
+  //   username: process.env.EASYPAISA_USERNAME,
+  //   password: process.env.EASYPAISA_PASSWORD,
+  // },
+});
+console.log('✅ pk-pay configured');
 
 // ---------- Helper: updateRecommendations ----------
 async function updateRecommendations(userId) {
@@ -195,7 +222,6 @@ app.post('/api/register', async (req, res) => {
     }
 });
 
-// ✅ LOGIN ROUTE WITH ROLE IN RESPONSE
 app.post('/api/login', async (req, res) => {
     const { email, password } = req.body;
     try {
@@ -205,7 +231,6 @@ app.post('/api/login', async (req, res) => {
         const valid = await bcrypt.compare(password, user.password_hash);
         if (!valid) return res.status(401).json({ error: 'Invalid credentials' });
         delete user.password_hash;
-        // Ensure role is always present (default to 'user')
         user.role = user.role || 'user';
         res.json({ success: true, user, token: user.user_id.toString() });
     } catch (err) {
@@ -273,6 +298,79 @@ app.get('/api/profile/:userId', async (req, res) => {
     } catch (err) {
         console.error('Error in /api/profile:', err);
         res.status(500).json({ error: err.message });
+    }
+});
+
+// ========== ADDED: Payment Endpoint (pk-pay) ==========
+app.post('/api/create-payment-intent', async (req, res) => {
+    try {
+        const { amount, provider, userId, charityId, isAnonymous } = req.body;
+
+        if (!amount || amount <= 0) {
+            return res.status(400).json({ error: 'Invalid amount' });
+        }
+        const allowedProviders = ['stripe', 'jazzcash', 'easypaisa'];
+        if (!provider || !allowedProviders.includes(provider)) {
+            return res.status(400).json({ error: 'Invalid payment provider' });
+        }
+
+        const payment = await createPayment({
+            provider: provider,
+            amount: Math.round(amount * 100), // Convert to paisa/cents
+            currency: provider === 'stripe' ? 'usd' : 'pkr',
+            description: `Donation to charity ${charityId} from user ${userId}`,
+            returnUrl: 'zariyaapp://payment-callback',
+            metadata: {
+                userId: userId,
+                charityId: charityId,
+                isAnonymous: isAnonymous || false,
+            },
+        });
+
+        res.json({
+            success: true,
+            paymentUrl: payment.redirectUrl || null,
+            clientSecret: payment.clientSecret || null,
+            paymentId: payment.id,
+        });
+    } catch (error) {
+        console.error('Payment creation error:', error);
+        res.status(500).json({ error: error.message });
+    }
+});
+
+// ========== ADDED: Webhook Endpoint ==========
+app.post('/api/payment-webhook', async (req, res) => {
+    try {
+        const event = req.body;
+        console.log('Webhook received:', event);
+
+        if (event.status === 'success' || event.type === 'payment_intent.succeeded') {
+            const metadata = event.metadata || {};
+            const amount = (event.amount || 0) / 100;
+            const { userId, charityId, isAnonymous } = metadata;
+
+            if (userId && charityId) {
+                await promisePool.query(
+                    `INSERT INTO donations (user_id, charity_id, amount, is_anonymous, payment_intent_id, status)
+                     VALUES (?, ?, ?, ?, ?, 'completed')`,
+                    [userId, charityId, amount, isAnonymous === 'true', event.id || 'webhook']
+                );
+                await promisePool.query(
+                    `UPDATE charities SET total_raised = total_raised + ? WHERE charity_id = ?`,
+                    [amount, charityId]
+                );
+                await promisePool.query(
+                    `UPDATE users SET total_donated = total_donated + ? WHERE user_id = ?`,
+                    [amount, userId]
+                );
+                console.log(`✅ Donation recorded via webhook: user ${userId}, charity ${charityId}, amount ${amount}`);
+            }
+        }
+        res.json({ received: true });
+    } catch (error) {
+        console.error('Webhook error:', error);
+        res.status(500).json({ error: error.message });
     }
 });
 
