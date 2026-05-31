@@ -55,13 +55,15 @@ const promisePool = pool.promise();
 })();
 
 // ========== ADDED: Configure pk-pay ==========
+const stripeConfig = process.env.STRIPE_SECRET_KEY ? {
+  stripe: { secretKey: process.env.STRIPE_SECRET_KEY }
+} : {};
+
 configure({
-  environment: 'sandbox', // Change to 'production' when live
+  environment: 'sandbox',
   maxRetries: 3,
-  // Stripe configuration (easiest for testing)
-  stripe: {
-    secretKey: process.env.STRIPE_SECRET_KEY, // Add to your .env
-  },
+  ...stripeConfig,
+
   // Optional: JazzCash & EasyPaisa (uncomment if you have test credentials)
   // jazzcash: {
   //   merchantId: process.env.JAZZCASH_MERCHANT_ID,
@@ -338,7 +340,15 @@ app.post('/api/create-payment-intent', async (req, res) => {
         res.status(500).json({ error: error.message });
     }
 });
-
+app.post('/api/mock-payment', async (req, res) => {
+  const { amount, userId, charityId, isAnonymous } = req.body;
+  await new Promise(resolve => setTimeout(resolve, 2000));
+  res.json({
+    success: true,
+    message: 'Payment successful (mock)',
+    transactionId: 'MOCK_' + Date.now()
+  });
+});
 // ========== ADDED: Webhook Endpoint ==========
 app.post('/api/payment-webhook', async (req, res) => {
     try {
