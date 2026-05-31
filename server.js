@@ -147,16 +147,52 @@ app.get('/api/ngos/general', async (req, res) => {
     }
 });
 
+// ✅ IMPROVED: /api/recommendations endpoint
 app.get('/api/recommendations/:userId', async (req, res) => {
     const userId = parseInt(req.params.userId);
     try {
-        const [recs] = await promisePool.query(
+        // Check if user has any donation history
+        const [historyCount] = await promisePool.query(
+            `SELECT COUNT(*) as count FROM donations WHERE user_id = ?`, [userId]
+        );
+        
+        // If no donation history → return random NGOs (fresh each request)
+        if (historyCount[0].count === 0) {
+            const [randomNGOs] = await promisePool.query(
+                `SELECT *, 0 as score, 'Discover' as reason FROM charities ORDER BY RAND() LIMIT 10`
+            );
+            return res.json(randomNGOs);
+        }
+        
+        // For users with history, use stored recommendations
+        let [recs] = await promisePool.query(
             `SELECT c.*, r.score, r.reason
              FROM recommendations r
              JOIN charities c ON r.charity_id = c.charity_id
              WHERE r.user_id = ?
              ORDER BY r.score DESC`, [userId]
         );
+        
+        // If no recommendations in DB (should not happen, but fallback)
+        if (recs.length === 0) {
+            await updateRecommendations(userId);
+            [recs] = await promisePool.query(
+                `SELECT c.*, r.score, r.reason
+                 FROM recommendations r
+                 JOIN charities c ON r.charity_id = c.charity_id
+                 WHERE r.user_id = ?
+                 ORDER BY r.score DESC`, [userId]
+            );
+        }
+        
+        // Final fallback: if still empty, return any 10 NGOs
+        if (recs.length === 0) {
+            const [fallback] = await promisePool.query(
+                `SELECT *, 0 as score, 'Featured NGO' as reason FROM charities ORDER BY RAND() LIMIT 10`
+            );
+            return res.json(fallback);
+        }
+        
         res.json(recs);
     } catch (err) {
         console.error('Error in /api/recommendations:', err);
@@ -302,7 +338,7 @@ app.get('/api/profile/:userId', async (req, res) => {
     }
 });
 
-// ========== FIXED: Payment Endpoint with robust clientSecret extraction ==========
+// ========== Payment Endpoint (pk-pay) ==========
 app.post('/api/create-payment-intent', async (req, res) => {
     // 🔑 ADDED LOGS
     console.log('🔑 Received request to create payment intent.');
@@ -358,7 +394,7 @@ app.post('/api/create-payment-intent', async (req, res) => {
     }
 });
 
-// ========== UPDATED: Webhook endpoint ==========
+// ========== Webhook endpoint ==========
 app.post('/api/payment-webhook', async (req, res) => {
     try {
         const event = req.body;
